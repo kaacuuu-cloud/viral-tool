@@ -4,29 +4,46 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 // Gemini API 초기화
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
 
-// 분석 프롬프트
-const ANALYSIS_PROMPT = `아래 유튜브 영상 정보들을 분석해서 각 영상별로 JSON 배열 형식으로만 답변해주세요.
-다른 텍스트 없이 순수 JSON만 출력하세요. 마크다운 코드블록도 사용하지 마세요.
+// 검색어 기반 동적 분석 프롬프트 생성
+function buildAnalysisPrompt(searchQuery: string): string {
+  return `너는 유튜브 영상 콘텐츠 분석 전문가야.
+사용자가 "${searchQuery}"를 검색했어. 이 주제에 관심 있는 사람이 진짜 알고 싶어하는 실질적인 정보를 자막과 영상 정보에서 최대한 구체적으로 뽑아줘.
+
+아래 영상들을 각각 분석해서 JSON 배열로만 답변해. 다른 텍스트 없이 순수 JSON만 출력해. 마크다운 코드블록도 쓰지 마.
 
 [
   {
     "videoUrl": "영상 URL",
-    "adStatus": "광고임 또는 광고아님 또는 판별못함",
-    "productName": "리뷰 대상 제품명 (없으면 해당없음)",
-    "contentType": "단일리뷰 또는 비교리뷰 또는 기타",
-    "insight": "영상의 핵심 메시지 요약 (2-3문장)"
+    "adStatus": "광고임 / 광고아님 / 판별못함",
+    "contentType": "영상 유형 (브이로그, 리뷰, 가이드, 비교, 언박싱, 튜토리얼, 기타 등)",
+    "keyInfo": [
+      "자막에서 추출한 핵심 정보 1 (구체적 숫자/이름/장소 포함)",
+      "핵심 정보 2",
+      "핵심 정보 3",
+      "..."
+    ],
+    "pros": ["영상에서 언급된 긍정적 포인트들"],
+    "cons": ["영상에서 언급된 부정적 포인트 / 주의사항"],
+    "insight": "이 영상의 핵심 결론 또는 추천 포인트 (1-2문장)"
   }
 ]
 
-광고 판별 기준:
-- 영상 제목/설명에 "유료광고", "협찬", "제공", "AD", "Sponsored" 등 포함 여부
-- 자막 내용에서 광고 관련 발화 탐지 ("이 영상은 OO의 지원을 받아", "협찬" 등)
-- 확실하지 않으면 "판별못함"으로 표시
+핵심 분석 규칙:
+1. keyInfo는 자막 내용에서 뽑은 실질 정보여야 해. 예시:
+   - 여행: 비용(항공/숙소/식비), 일정, 호텔명, 항공사, 꿀팁, 추천 장소, 주의사항
+   - 제품: 제품명, 모델명, 가격, 스펙, 사용감, 비교 대상
+   - 맛집: 가게명, 위치, 메뉴, 가격대, 웨이팅, 추천 메뉴
+   - 기타: 해당 주제에서 시청자가 의사결정에 필요한 구체적 사실
+2. "이 영상은 ~에 대한 영상입니다" 같은 뻔한 요약은 절대 금지. 자막에 나온 구체적 팩트만 추출
+3. 숫자, 금액, 날짜, 고유명사가 있으면 반드시 포함
+4. 자막이 없거나 정보가 부족하면 제목/설명에서라도 추출하고, 정보가 정말 없으면 "정보 부족"으로 표시
+5. keyInfo는 최소 3개, 최대 10개까지 뽑아줘
 
-제품 분석 기준:
-- 어떤 기기/제품에 대한 리뷰인지 정확한 제품명과 모델명 포함
-- 비교 영상인 경우 각 제품별 장단점을 보수적으로 분석
-- 스펙과 장단점이 정확히 매칭되어야 함`;
+광고 판별 기준:
+- 제목/설명에 "유료광고", "협찬", "제공", "AD", "Sponsored", "내돈내산" 등
+- 자막에서 "지원을 받아", "협찬", "제공받은" 등 발화 탐지
+- 확실하지 않으면 "판별못함"`;
+}
 
 // 유튜브 자막 추출 (YouTube의 timedtext API 활용)
 async function fetchTranscript(videoId: string): Promise<string> {
@@ -79,9 +96,16 @@ async function fetchTranscript(videoId: string): Promise<string> {
       )
       .join(" ");
 
-    // 자막이 너무 길면 앞뒤 잘라서 핵심만 (토큰 절약 + 속도 향상)
-    if (transcript.length > 3000) {
-      return transcript.slice(0, 1500) + " ... " + transcript.slice(-1500);
+    // 자막이 너무 길면 앞뒤 + 중간 잘라서 핵심만 (토큰 절약 + 정보 손실 최소화)
+    if (transcript.length > 6000) {
+      const third = Math.floor(transcript.length / 3);
+      return (
+        transcript.slice(0, 2000) +
+        " ... " +
+        transcript.slice(third, third + 2000) +
+        " ... " +
+        transcript.slice(-2000)
+      );
     }
     return transcript;
   } catch {
@@ -124,8 +148,9 @@ function parseResponse(text: string): object[] | null {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { videoUrls, videoMeta } = body as {
+    const { videoUrls, videoMeta, searchQuery } = body as {
       videoUrls: string[];
+      searchQuery?: string;
       videoMeta?: {
         title: string;
         channelTitle: string;
@@ -175,10 +200,11 @@ export async function POST(request: NextRequest) {
       )
       .join("\n\n---\n\n");
 
-    // 3. Gemini API 호출
+    // 3. Gemini API 호출 — 검색어 기반 동적 프롬프트
+    const prompt = buildAnalysisPrompt(searchQuery || "일반 콘텐츠");
     const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
     const result = await model.generateContent(
-      `${ANALYSIS_PROMPT}\n\n--- 분석할 영상 목록 ---\n\n${videoInfoText}`
+      `${prompt}\n\n--- 분석할 영상 목록 ---\n\n${videoInfoText}`
     );
     const responseText = result.response.text();
 

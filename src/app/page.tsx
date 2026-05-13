@@ -23,9 +23,13 @@ interface VideoItem {
 interface AnalysisResult {
   videoUrl: string;
   adStatus: string;
-  productName: string;
   contentType: string;
+  keyInfo: string[];
+  pros: string[];
+  cons: string[];
   insight: string;
+  // 이전 형식 호환
+  productName?: string;
 }
 
 const MAX_SELECTION = 50;
@@ -172,7 +176,7 @@ export default function Home() {
       const res = await fetch("/api/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ videoUrls: urls, videoMeta }),
+        body: JSON.stringify({ videoUrls: urls, videoMeta, searchQuery: query }),
       });
       const data = await res.json();
       if (!res.ok) { setError(data.error || "분석 중 문제가 생겼어요"); return; }
@@ -189,16 +193,20 @@ export default function Home() {
     const selectedVideos = filteredVideos.filter((v) => selectedIds.has(v.id));
     const rows = selectedVideos.map((video, index) => {
       const analysis = analysisResults[index] || {};
+      const a = analysis as AnalysisResult;
       return {
         NO: index + 1,
-        제품명: (analysis as AnalysisResult).productName || "",
+        영상유형: a.contentType || "",
         투고일: formatDate(video.publishedAt),
         플랫폼: video.isShorts ? "YouTube Shorts" : "YouTube",
         계정명: video.channelTitle,
         조회수: video.viewCount, 좋아요수: video.likeCount,
         댓글수: video.commentCount, URL: video.url,
-        광고여부: (analysis as AnalysisResult).adStatus || "",
-        "비고(인사이트)": (analysis as AnalysisResult).insight || "",
+        광고여부: a.adStatus || "",
+        "핵심정보": (a.keyInfo || []).join(" / "),
+        "장점": (a.pros || []).join(" / "),
+        "단점": (a.cons || []).join(" / "),
+        "결론": a.insight || "",
       };
     });
     const headers = Object.keys(rows[0] || {});
@@ -311,49 +319,109 @@ export default function Home() {
               </button>
             </div>
           </div>
-          <div className="bg-white rounded-xl overflow-hidden shadow-sm">
-            <table className="w-full text-[13px]">
-              <thead>
-                <tr className="border-b border-[#E5E5EA]">
-                  <th className="px-4 py-3 text-left font-semibold text-[#8E8E93] text-[11px] uppercase tracking-wider w-10">NO</th>
-                  <th className="px-4 py-3 text-left font-semibold text-[#8E8E93] text-[11px] uppercase tracking-wider">제품명</th>
-                  <th className="px-4 py-3 text-left font-semibold text-[#8E8E93] text-[11px] uppercase tracking-wider">날짜</th>
-                  <th className="px-4 py-3 text-left font-semibold text-[#8E8E93] text-[11px] uppercase tracking-wider">채널</th>
-                  <th className="px-4 py-3 text-right font-semibold text-[#8E8E93] text-[11px] uppercase tracking-wider">조회</th>
-                  <th className="px-4 py-3 text-right font-semibold text-[#8E8E93] text-[11px] uppercase tracking-wider">좋아요</th>
-                  <th className="px-4 py-3 text-center font-semibold text-[#8E8E93] text-[11px] uppercase tracking-wider">광고</th>
-                  <th className="px-4 py-3 text-left font-semibold text-[#8E8E93] text-[11px] uppercase tracking-wider">링크</th>
-                  <th className="px-4 py-3 text-left font-semibold text-[#8E8E93] text-[11px] uppercase tracking-wider min-w-[220px]">인사이트</th>
-                </tr>
-              </thead>
-              <tbody>
-                {videos.filter((v) => selectedIds.has(v.id)).map((video, index) => {
-                  const a = analysisResults[index] as AnalysisResult | undefined;
-                  const ad = a?.adStatus || "";
-                  return (
-                    <tr key={video.id} className="border-b border-[#E5E5EA]/60 hover:bg-[#F2F2F7]/50">
-                      <td className="px-4 py-3 text-[#8E8E93]">{index + 1}</td>
-                      <td className="px-4 py-3 font-medium text-[#000]">{a?.productName || "-"}</td>
-                      <td className="px-4 py-3 text-[#3C3C43]/60 whitespace-nowrap">{formatDate(video.publishedAt)}</td>
-                      <td className="px-4 py-3 text-[#3C3C43]/60">{video.channelTitle}</td>
-                      <td className="px-4 py-3 text-right text-[#3C3C43]/60">{formatCount(video.viewCount)}</td>
-                      <td className="px-4 py-3 text-right text-[#3C3C43]/60">{formatCount(video.likeCount)}</td>
-                      <td className="px-4 py-3 text-center">
-                        <span className={`inline-block px-2 py-0.5 rounded-full text-[11px] font-medium ${
-                          ad === "광고임" ? "bg-[#FF3B30]/10 text-[#FF3B30]"
-                          : ad === "광고아님" ? "bg-[#34C759]/10 text-[#34C759]"
-                          : "text-[#8E8E93]"
-                        }`}>{ad || "-"}</span>
-                      </td>
-                      <td className="px-4 py-3">
-                        <a href={video.url} target="_blank" rel="noopener noreferrer" className="text-[#007AFF] hover:underline">열기</a>
-                      </td>
-                      <td className="px-4 py-3 text-[#3C3C43]/60 text-[12px] leading-relaxed">{a?.insight || "-"}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+          <div className="space-y-3">
+            {videos.filter((v) => selectedIds.has(v.id)).map((video, index) => {
+              const a = analysisResults[index] as AnalysisResult | undefined;
+              const ad = a?.adStatus || "";
+              const keyInfo = a?.keyInfo || [];
+              const pros = a?.pros || [];
+              const cons = a?.cons || [];
+              return (
+                <div key={video.id} className="bg-white rounded-xl shadow-sm overflow-hidden">
+                  {/* 헤더: 영상 기본 정보 */}
+                  <div className="px-4 py-3 border-b border-[#E5E5EA]/60">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="text-[11px] font-bold text-[#8E8E93]">#{index + 1}</span>
+                          <span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-semibold ${
+                            ad === "광고임" ? "bg-[#FF3B30]/10 text-[#FF3B30]"
+                            : ad === "광고아님" ? "bg-[#34C759]/10 text-[#34C759]"
+                            : "bg-[#8E8E93]/10 text-[#8E8E93]"
+                          }`}>{ad || "판별못함"}</span>
+                          {a?.contentType && (
+                            <span className="inline-block px-2 py-0.5 rounded-full text-[10px] font-medium bg-[#007AFF]/10 text-[#007AFF]">{a.contentType}</span>
+                          )}
+                        </div>
+                        <a href={video.url} target="_blank" rel="noopener noreferrer" className="text-[13px] font-semibold text-[#000] hover:text-[#007AFF] transition-colors line-clamp-2">
+                          {video.title}
+                        </a>
+                        <div className="flex items-center gap-3 mt-1 text-[11px] text-[#8E8E93]">
+                          <span>{video.channelTitle}</span>
+                          <span>{formatDate(video.publishedAt)}</span>
+                          <span>조회 {formatCount(video.viewCount)}</span>
+                          <span>좋아요 {formatCount(video.likeCount)}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 본문: 핵심 정보 */}
+                  <div className="px-4 py-3 space-y-3">
+                    {/* 핵심 정보 */}
+                    {keyInfo.length > 0 && (
+                      <div>
+                        <p className="text-[11px] font-semibold text-[#8E8E93] uppercase tracking-wider mb-1.5">핵심 정보</p>
+                        <ul className="space-y-1">
+                          {keyInfo.map((info, i) => (
+                            <li key={i} className="text-[12px] text-[#3C3C43] leading-relaxed flex gap-1.5">
+                              <span className="text-[#007AFF] shrink-0">•</span>
+                              <span>{info}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {/* 장점 / 단점 나란히 */}
+                    {(pros.length > 0 || cons.length > 0) && (
+                      <div className="flex gap-4">
+                        {pros.length > 0 && (
+                          <div className="flex-1">
+                            <p className="text-[11px] font-semibold text-[#34C759] uppercase tracking-wider mb-1.5">장점 / 추천</p>
+                            <ul className="space-y-0.5">
+                              {pros.map((p, i) => (
+                                <li key={i} className="text-[12px] text-[#3C3C43]/80 leading-relaxed flex gap-1.5">
+                                  <span className="text-[#34C759] shrink-0">+</span>
+                                  <span>{p}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                        {cons.length > 0 && (
+                          <div className="flex-1">
+                            <p className="text-[11px] font-semibold text-[#FF3B30] uppercase tracking-wider mb-1.5">단점 / 주의</p>
+                            <ul className="space-y-0.5">
+                              {cons.map((c, i) => (
+                                <li key={i} className="text-[12px] text-[#3C3C43]/80 leading-relaxed flex gap-1.5">
+                                  <span className="text-[#FF3B30] shrink-0">-</span>
+                                  <span>{c}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* 결론 */}
+                    {a?.insight && (
+                      <div className="bg-[#F2F2F7] rounded-lg px-3 py-2">
+                        <p className="text-[12px] text-[#3C3C43] leading-relaxed">
+                          <span className="font-semibold">결론:</span> {a.insight}
+                        </p>
+                      </div>
+                    )}
+
+                    {/* 정보 없음 fallback */}
+                    {keyInfo.length === 0 && !a?.insight && (
+                      <p className="text-[12px] text-[#8E8E93]">분석 정보 없음</p>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
       ) : (
